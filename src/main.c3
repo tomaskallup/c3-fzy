@@ -203,6 +203,7 @@ fn int main(String[] args)
   filter_options(&state);
 
   state.terminal_interface.input_file = &&file::open("/dev/tty", "r")!!;
+  state.terminal_interface.output_file = &&file::open("/dev/tty", "w")!!;
   state.terminal_interface.init();
   if (catch excuse = state.terminal_interface.start()) {
     error.append_chars(string::tformat("%s", excuse));

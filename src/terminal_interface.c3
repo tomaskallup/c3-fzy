@@ -20,7 +20,7 @@ struct TerminalInterface {
   Termios original_termios;
   Termios termios;
   File *input_file;
-  File *ouput_file;
+  File *output_file;
   Fd fd;
 }
 
@@ -33,7 +33,7 @@ fn void TerminalInterface.init(&self)
   // Default to stdin
   if (self.input_file == null) self.input_file = io::stdin();
   // Default to stdout
-  if (self.ouput_file == null) self.ouput_file = io::stdout();
+  if (self.output_file == null) self.output_file = io::stdout();
 
   if (!self.fd) self.fd = libc::fileno(self.input_file.file);
 
@@ -53,12 +53,12 @@ fn void! TerminalInterface.start(&self)
   )!;
 
   // Disable Canonical mode for raw input processing and priting the keypresses
-  self.termios.c_lflag &= ~(termios::ICANON | termios::ECHO);
+  self.termios.c_lflag &= (Tcflags)~(termios::ICANON | termios::ECHO);
   // Disable signals, so Ctrl + c doesn't kill the app.
-  self.termios.c_lflag &= ~(termios::ISIG);
+  self.termios.c_lflag &= (Tcflags)~(termios::ISIG);
   // Disable flow, so Ctrl + q & Ctrl + s
   // self.termios.c_iflag &= ~(termios::IXON);
-  self.termios.setAttr(self.fd, termios::TCSANOW);
+  self.termios.setAttr(self.fd, (int)termios::TCSANOW);
 
   self.flush()!;
 }
@@ -67,8 +67,9 @@ fn void! TerminalInterface.close(&self)
 {
   // Exit alternate screen and reset colors
 	self.write(@escape_sequence("[?1049l") +++ @escape_sequence("[0m"))!;
+  self.flush()!;
   // Reset termios
-  self.original_termios.setAttr(self.fd, termios::TCSANOW);
+  self.original_termios.setAttr(self.fd, (int)termios::TCSANOW);
 }
 
 fn void! TerminalInterface.set_line_col(&self, usz line, usz col, String content)
@@ -83,22 +84,22 @@ fn void! TerminalInterface.set_line(&self, usz line, String content)
 
 fn void! TerminalInterface.flush(&self)
 {
-  self.ouput_file.flush()!;
+  self.output_file.flush()!;
 }
 
 fn void! TerminalInterface.write_char(&self, char c)
 {
-  self.ouput_file.write_byte(c)!;
+  self.output_file.write_byte(c)!;
 }
 
 fn void! TerminalInterface.write(&self, String content)
 {
-  self.ouput_file.write(content)!;
+  self.output_file.write(content)!;
 }
 
 fn void! TerminalInterface.writen(&self, String content)
 {
-  self.ouput_file.write(content)!;
+  self.output_file.write(content)!;
   self.write_char('\n')!;
 }
 
