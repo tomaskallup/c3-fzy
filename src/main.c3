@@ -93,9 +93,7 @@ fn void! render(State state)
   String prompt = string::tformat(">> %s", query);
   state.terminal_interface.set_line(1, prompt)!;
 
-  // Set color for options & render options
-	// state.terminal_interface.write(ti::@escape_sequence("[38;5;40m"))!;
-
+  // @TODO: Handle window size
   usz mark = allocator::temp().mark();
   foreach (i, option: state.filtered_options) {
     DString option_colored;

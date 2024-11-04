@@ -16,6 +16,7 @@ macro @escape_sequence(String $seq)
 
 // @TODO: Add macros for colors etc.
 
+// @TODO: Get & update winsize
 struct TerminalInterface {
   Termios original_termios;
   Termios termios;
@@ -53,12 +54,12 @@ fn void! TerminalInterface.start(&self)
   )!;
 
   // Disable Canonical mode for raw input processing and priting the keypresses
-  self.termios.c_lflag &= (Tcflags)~(termios::ICANON | termios::ECHO);
+  self.termios.c_lflag &= ~(termios::ICANON | termios::ECHO);
   // Disable signals, so Ctrl + c doesn't kill the app.
-  self.termios.c_lflag &= (Tcflags)~(termios::ISIG);
+  self.termios.c_lflag &= ~(termios::ISIG);
   // Disable flow, so Ctrl + q & Ctrl + s
   // self.termios.c_iflag &= ~(termios::IXON);
-  self.termios.setAttr(self.fd, (int)termios::TCSANOW);
+  self.termios.setAttr(self.fd, termios::TCSANOW);
 
   self.flush()!;
 }
@@ -69,7 +70,7 @@ fn void! TerminalInterface.close(&self)
 	self.write(@escape_sequence("[?1049l") +++ @escape_sequence("[0m"))!;
   self.flush()!;
   // Reset termios
-  self.original_termios.setAttr(self.fd, (int)termios::TCSANOW);
+  self.original_termios.setAttr(self.fd, termios::TCSANOW);
 }
 
 fn void! TerminalInterface.set_line_col(&self, usz line, usz col, String content)
