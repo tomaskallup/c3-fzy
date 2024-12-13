@@ -2,8 +2,9 @@ module c3_fzy;
 
 import std::io;
 import std::collections::list;
+import std::math;
 
-import terminal_interface::ti;
+import terminal_interface;
 
 const PROMPT=">> ";
 
@@ -27,8 +28,8 @@ struct State {
   DString query;
   usz cursor;
   usz selected_index;
-  TerminalInterface terminal_interface;
   bool cancelled;
+  Winsize winsize;
 }
 
 fn void filter_options(State* state)
@@ -79,79 +80,97 @@ fn void filter_options(State* state)
   }
 }
 
+fn void! update_cursor(State state)
+{
+  // Set cursor style & position
+  // ti::write(ti::@escape_sequence("[6 q"))!;
+  ti::set_cursor_pos(1, PROMPT.len + 1 + state.cursor)!;
+  ti::flush()!;
+}
+
 fn void! render(State state)
 {
   // Clear the screen
-  state.terminal_interface.clear()!;
+  ti::clear()!;
 
   String query = state.query.str_view();
 
-  // Set color for prompt
-	state.terminal_interface.write(ti::@escape_sequence("[0m"))!;
+  Winsize winsize = state.winsize;
+  usz free_lines = (usz)winsize.ws_row - 3;
 
   // Render prompt
-  String prompt = string::tformat(">> %s", query);
-  state.terminal_interface.set_line(1, prompt)!;
+  TermString prompt;
+  prompt.temp_init();
+  prompt.reset_style();
+  prompt.append(PROMPT);
+  prompt.color_256(40).style(Style.BOLD);
+  prompt.append(query);
+  prompt.style(Style.RESET_BOLD);
+  ti::set_line(1, prompt.str_view())!;
 
-  // @TODO: Handle window size
   usz mark = allocator::temp().mark();
-  foreach (i, option: state.filtered_options) {
-    DString option_colored;
-    option_colored.temp_init();
+  TermString rendered_option;
+  rendered_option.temp_init();
+  usz filtered_count = state.filtered_options.len();
+  if (filtered_count) {
+    FilteredOption*[] options_to_render = state.filtered_options.array_view()[state.selected_index:math::min(free_lines,filtered_count)];
 
-    usz last_index = 0;
-    bool continuous = false;
+    foreach (i, option: options_to_render) {
+      rendered_option.clear();
+      usz last_index = 0;
+      bool continuous = false;
 
-    if (i == state.selected_index) {
-      option_colored.append_chars(ti::@escape_sequence("[48;5;245m"));
-    } else {
-      option_colored.append_chars(ti::@escape_sequence("[49m"));
-    }
-    if (!option.match_indexes.len()) {
-      option_colored.append_chars(ti::@escape_sequence("[39m"));
-      option_colored.append_chars(option.value);
-    } else {
-      // @TODO: Maybe use for(usz mi = 0; mi < option.match_indexes.len(); mi++) with a while cycle inside to simplify?
-      foreach (match_index: option.match_indexes) {
-        if (match_index - last_index > 1 || (match_index != last_index && !continuous)) {
-          option_colored.append_chars(ti::@escape_sequence("[39m"));
-          String to_append;
-          if (!continuous) {
-            to_append = option.value[last_index..match_index-1];
-          } else {
-            to_append = option.value[last_index+1..match_index-1];
+      if (i == 0) {
+        rendered_option.color_256(245, true);
+      } else {
+        rendered_option.color_simple(SimpleColor.BG_DEFAULT);
+      }
+
+      if (!option.match_indexes.len()) {
+        rendered_option.color_simple(SimpleColor.DEFAULT);
+        rendered_option.append_chars(option.value);
+      } else {
+        for (usz mi = 0; mi < option.match_indexes.len(); mi++) {
+          usz match_index = option.match_indexes[mi];
+
+          if (match_index > 0) {
+            rendered_option.color_simple(SimpleColor.DEFAULT);
+            usz start = mi == 0 ? last_index : last_index + 1;
+            rendered_option.append_chars(option.value[start..match_index-1]);
           }
-          option_colored.append_chars(to_append);
-          continuous = false;
+
+          // Skip over continuous indexes
+          while ((mi + 1) < option.match_indexes.len() && option.match_indexes[mi+1] - option.match_indexes[mi] == 1) mi++;
+
+          usz end_index = option.match_indexes[mi];
+
+          rendered_option.color_256(40);
+          rendered_option.append_chars(option.value[match_index..end_index]);
+
+          last_index = end_index;
         }
 
-        if (!continuous) {
-          option_colored.append_chars(ti::@escape_sequence("[38;5;40m"));
-          continuous = true;
+        if (last_index < option.value.len) 
+        {
+          rendered_option.color_simple(SimpleColor.DEFAULT);
+          rendered_option.append_chars(option.value[last_index+1..]);
         }
-
-        option_colored.append_char(option.value[match_index]);
-
-        last_index = match_index;
       }
 
-      if (last_index < option.value.len) 
-      {
-        option_colored.append_chars(ti::@escape_sequence("[39m"));
-        option_colored.append_chars(option.value[last_index+1..]);
-      }
+      ti::set_line(2 + i, rendered_option.str_view())!;
     }
-
-    state.terminal_interface.set_line(2 + i, option_colored.str_view())!;
   }
   allocator::temp().reset(mark);
 
-  state.terminal_interface.write(ti::@escape_sequence("[6 q"))!;
-  state.terminal_interface.set_cursor_pos(1, PROMPT.len + 1 + state.cursor)!;
+  TermString winsize_str;
+  winsize_str.temp_init();
+  winsize_str.reset_style();
+  winsize_str.color_simple(SimpleColor.BLUE);
+  winsize_str.appendf("Row: %d, col: %d, free: %d", winsize.ws_row, winsize.ws_col, free_lines);
+  ti::set_line((usz)winsize.ws_row-1, winsize_str.str_view())!;
 
-  // Clear styles after rendering
-	state.terminal_interface.write(ti::@escape_sequence("[0m"))!;
-  state.terminal_interface.flush()!;
+  // Clear styles after rendering & flush
+	ti::reset_style(true)!;
 }
 
 DString error;
@@ -165,7 +184,7 @@ fn void cleanup(State* state)
 
   foreach(filtered_option: state.filtered_options) filtered_option.free();
   state.filtered_options.free();
-  if (catch excuse = state.terminal_interface.close()) {
+  if (catch excuse = ti::close()) {
     error.append_chars(string::tformat("%s", excuse));
   }
 
@@ -200,98 +219,102 @@ fn int main(String[] args)
 
   filter_options(&state);
 
-  state.terminal_interface.input_file = &&file::open("/dev/tty", "r")!!;
-  state.terminal_interface.output_file = &&file::open("/dev/tty", "w")!!;
-  state.terminal_interface.init();
-  if (catch excuse = state.terminal_interface.start()) {
+  ti::init(&&file::open("/dev/tty", "r"), &&file::open("/dev/tty", "w"))!!;
+  if (catch excuse = ti::start()) {
     error.append_chars(string::tformat("%s", excuse));
     return 1;
   }
 
-  bool should_loop = true;
-  while (should_loop) {
-    if (catch excuse = render(state)) {
-      error.append_chars(string::tformat("Render failed: %s", excuse));
-      should_loop = false;
-      state.cancelled = true;
-      return 1;
-    }
+  state.winsize = ti::get_winsize();
 
-    char[3] buf;
-    usz len;
-    usz wanted_len = 1;
-    do {
-      char! ch = state.terminal_interface.input_file.read_byte();
-      if (catch excuse = ch){
-        error.append_chars(string::tformat("Read failed: %s", excuse));
-        should_loop = false;
+  bool should_render = true;
+  while (ti::is_running()) {
+    if (should_render) {
+      if (catch excuse = render(state)) {
+        error.append_chars(string::tformat("Render failed: %s", excuse));
         state.cancelled = true;
         return 1;
       }
-      buf[len++] = ch;
 
-      // Handle multibytes
-      if (len == 1 && buf[0] == 27) wanted_len = 3;
-    } while(len < wanted_len);
-
-    String input = (String)buf[0..len-1];
-    usz old_query_len = state.query.len();
-
-    /* io::print(len);
-    io::print(input);
-    io::printn((char[])input); */
-
-    switch (input) {
-      case String{ti::@ctrl_key('c')}:
-        should_loop = false;
-        state.cancelled = true;
-        return 1;
-      // Backspace
-      case String{127}:
-        if (old_query_len > 0 && state.cursor) {
-          state.query.delete(state.cursor - 1);
-          state.cursor--;
-        }
-      // Enter key
-      case String{10}:
-        should_loop = false;
-      // Left arrow key
-      case String{27,91,68}:
-        nextcase;
-      case String{ti::@ctrl_key('h')}:
-        if (state.cursor) state.cursor--;
-      // Right arrow key
-      case String{27,91,67}:
-        nextcase;
-      case String{ti::@ctrl_key('l')}:
-        if (state.cursor < old_query_len) state.cursor++;
-      // Up arrow key
-      case String{27,91,65}:
-        nextcase;
-      case String{27,91,90}:
-        nextcase;
-      case String{ti::@ctrl_key('p')}:
-        if (state.filtered_options.len()) {
-          if (state.selected_index) state.selected_index--;
-        }
-      // Down arrow key
-      case String{27,91,66}:
-        nextcase;
-      case String{9}:
-        nextcase;
-      case String{ti::@ctrl_key('n')}:
-        if (state.selected_index < state.filtered_options.len() - 1) {
-          state.selected_index++;
-        }
-      default:
-        state.query.insert_chars_at(state.cursor, input);
-        state.cursor++;
+      update_cursor(state)!!;
+      should_render = false;
     }
 
-    usz new_query_len = state.query.len();
+    if (try event = ti::get_event()) {
+      if (event.type == EventType.WIN_RESIZE) {
+        state.winsize = event.new_size;
+        should_render = true;
+      } else if (event.type == EventType.INPUT) {
+        String input = event.input;
+        usz old_query_len = state.query.len();
 
-    if (old_query_len != new_query_len) {
-      filter_options(&state);
+        switch ((char[])input) {
+          case {ti::@ctrl_key('c')}:
+            ti::stop();
+            state.cancelled = true;
+            return 1;
+            // Backspace
+          case {127}:
+            if (old_query_len > 0 && state.cursor) {
+              state.query.delete(state.cursor - 1);
+              state.cursor--;
+            }
+            // Enter key
+          case {13}:
+            ti::stop();
+            // Left arrow key
+          case {27,91,68}:
+            nextcase;
+          case {ti::@ctrl_key('h')}:
+            if (state.cursor) {
+              state.cursor--;
+              update_cursor(state)!!;
+            }
+            // Right arrow key
+          case {27,91,67}:
+            nextcase;
+          case {ti::@ctrl_key('l')}:
+            if (state.cursor < old_query_len) {
+              state.cursor++;
+              update_cursor(state)!!;
+            }
+            // Up arrow key
+          case {27,91,65}:
+            nextcase;
+          case {27,91,90}:
+            nextcase;
+          case {ti::@ctrl_key('p')}:
+            if (state.filtered_options.len()) {
+              if (state.selected_index) {
+                state.selected_index--;
+                should_render = true;
+              }
+            }
+            // Down arrow key
+          case {27,91,66}:
+            nextcase;
+          case {9}:
+            nextcase;
+          case {ti::@ctrl_key('n')}:
+            if (state.selected_index < state.filtered_options.len() - 1) {
+              state.selected_index++;
+              should_render = true;
+            }
+          default:
+            if (input != "") {
+              state.query.insert_chars_at(state.cursor, input);
+              state.cursor++;
+            }
+        }
+
+        usz new_query_len = state.query.len();
+
+        if (old_query_len != new_query_len) {
+          filter_options(&state);
+          should_render = true;
+        }
+
+      }
     }
   }
 
