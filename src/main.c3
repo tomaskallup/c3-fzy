@@ -82,7 +82,6 @@ fn void filter_options(State* state)
 
 fn void! update_cursor(State state)
 {
-  // Set cursor style & position
   // ti::write(ti::@escape_sequence("[6 q"))!;
   ti::set_cursor_pos(1, PROMPT.len + 1 + state.cursor)!;
   ti::flush()!;
@@ -98,76 +97,70 @@ fn void! render(State state)
   Winsize winsize = state.winsize;
   usz free_lines = (usz)winsize.ws_row - 3;
 
-  // Render prompt
-  TermString prompt;
-  prompt.temp_init();
-  prompt.reset_style();
-  prompt.append(PROMPT);
-  prompt.color_256(40).style(Style.BOLD);
-  prompt.append(query);
-  prompt.style(Style.RESET_BOLD);
-  ti::set_line(1, prompt.str_view())!;
+  @pool() {
+    // Render prompt
+    TermString prompt;
+    prompt.temp_init();
+    prompt.reset_style();
+    prompt.append(PROMPT);
+    prompt.color_256(40).style(Style.BOLD);
+    prompt.append(query);
+    prompt.style(Style.RESET_BOLD);
+    ti::set_line(1, prompt.str_view())!;
 
-  usz mark = allocator::temp().mark();
-  TermString rendered_option;
-  rendered_option.temp_init();
-  usz filtered_count = state.filtered_options.len();
-  if (filtered_count) {
-    FilteredOption*[] options_to_render = state.filtered_options.array_view()[state.selected_index:math::min(free_lines,filtered_count)];
+    TermString rendered_option;
+    rendered_option.temp_init();
+    usz filtered_count = state.filtered_options.len();
+    if (filtered_count) {
+      FilteredOption*[] options_to_render = state.filtered_options.array_view()[state.selected_index:math::min(free_lines,filtered_count - state.selected_index)];
 
-    foreach (i, option: options_to_render) {
-      rendered_option.clear();
-      usz last_index = 0;
-      bool continuous = false;
+      foreach (i, option: options_to_render) {
+        rendered_option.clear();
+        usz last_index = 0;
+        bool continuous = false;
 
-      if (i == 0) {
-        rendered_option.color_256(245, true);
-      } else {
-        rendered_option.color_simple(SimpleColor.BG_DEFAULT);
-      }
+        if (i == 0) {
+          rendered_option.color_256(245, true);
+        } else {
+          rendered_option.color_simple(SimpleColor.BG_DEFAULT);
+        }
 
-      if (!option.match_indexes.len()) {
-        rendered_option.color_simple(SimpleColor.DEFAULT);
-        rendered_option.append_chars(option.value);
-      } else {
-        for (usz mi = 0; mi < option.match_indexes.len(); mi++) {
-          usz match_index = option.match_indexes[mi];
+        // @TODO: Handle limited space horizontally
+        if (!option.match_indexes.len()) {
+          rendered_option.color_simple(SimpleColor.DEFAULT);
+          rendered_option.append_chars(option.value);
+        } else {
+          for (usz mi = 0; mi < option.match_indexes.len(); mi++) {
+            usz match_index = option.match_indexes[mi];
 
-          if (match_index > 0) {
-            rendered_option.color_simple(SimpleColor.DEFAULT);
-            usz start = mi == 0 ? last_index : last_index + 1;
-            rendered_option.append_chars(option.value[start..match_index-1]);
+            if (match_index > 0) {
+              rendered_option.color_simple(SimpleColor.DEFAULT);
+              usz start = mi == 0 ? last_index : last_index + 1;
+              rendered_option.append_chars(option.value[start..match_index-1]);
+            }
+
+            // Skip over continuous indexes
+            while ((mi + 1) < option.match_indexes.len() && option.match_indexes[mi+1] - option.match_indexes[mi] == 1) mi++;
+
+            usz end_index = option.match_indexes[mi];
+
+            rendered_option.color_256(40);
+            rendered_option.append_chars(option.value[match_index..end_index]);
+
+            last_index = end_index;
           }
 
-          // Skip over continuous indexes
-          while ((mi + 1) < option.match_indexes.len() && option.match_indexes[mi+1] - option.match_indexes[mi] == 1) mi++;
-
-          usz end_index = option.match_indexes[mi];
-
-          rendered_option.color_256(40);
-          rendered_option.append_chars(option.value[match_index..end_index]);
-
-          last_index = end_index;
+          if (last_index < option.value.len) 
+          {
+            rendered_option.color_simple(SimpleColor.DEFAULT);
+            rendered_option.append_chars(option.value[last_index+1..]);
+          }
         }
 
-        if (last_index < option.value.len) 
-        {
-          rendered_option.color_simple(SimpleColor.DEFAULT);
-          rendered_option.append_chars(option.value[last_index+1..]);
-        }
+        ti::set_line(2 + i, rendered_option.str_view())!;
       }
-
-      ti::set_line(2 + i, rendered_option.str_view())!;
     }
-  }
-  allocator::temp().reset(mark);
-
-  TermString winsize_str;
-  winsize_str.temp_init();
-  winsize_str.reset_style();
-  winsize_str.color_simple(SimpleColor.BLUE);
-  winsize_str.appendf("Row: %d, col: %d, free: %d", winsize.ws_row, winsize.ws_col, free_lines);
-  ti::set_line((usz)winsize.ws_row-1, winsize_str.str_view())!;
+  };
 
   // Clear styles after rendering & flush
 	ti::reset_style(true)!;
