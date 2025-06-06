@@ -4,6 +4,7 @@ A very simple (no fancy matching algo, no scoring/sorting) fuzzy filter written 
 
 ## Building
 
+There is a git submodule in `./lib/terminal-interface.c3l` so make sure you init submodules first.
 This repo uses the C3 build system, it can be simply ran via `c3c run`.
 
 ## Terminal interface

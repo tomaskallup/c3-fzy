@@ -8,6 +8,8 @@ import terminal_interface;
 
 const PROMPT=">> ";
 
+KeyMap keymap;
+
 struct FilteredOption {
   String value;
   List{usz} match_indexes;
@@ -32,7 +34,9 @@ struct State {
   Winsize winsize;
 }
 
-fn void filter_options(State* state)
+State state;
+
+fn void filter_options()
 {
   state.selected_index = 0;
   String query = state.query.str_view();
@@ -80,14 +84,13 @@ fn void filter_options(State* state)
   }
 }
 
-fn void? update_cursor(State state)
+fn void? update_cursor()
 {
-  // ti::write(ti::@escape_sequence("[6 q"))!;
   ti::set_cursor_pos(1, PROMPT.len + 1 + state.cursor)!;
   ti::flush()!;
 }
 
-fn void? render(State state)
+fn void? render()
 {
   // Clear the screen
   ti::clear()!;
@@ -103,9 +106,9 @@ fn void? render(State state)
     prompt.tinit();
     prompt.reset_style();
     prompt.append(PROMPT);
-    prompt.color_256(40).style(Style.BOLD);
+    prompt.color_256(40).append_style(Style.BOLD);
     prompt.append(query);
-    prompt.style(Style.RESET_BOLD);
+    prompt.reset_style();
     ti::set_line(1, prompt.str_view())!;
 
     TermString rendered_option;
@@ -164,11 +167,13 @@ fn void? render(State state)
 
   // Clear styles after rendering & flush
   ti::reset_style(true)!;
+
+  update_cursor()!;
 }
 
 DString error;
 
-fn void cleanup(State* state)
+fn void cleanup()
 {
   String selected;
   if (!state.cancelled && state.filtered_options.len()) {
@@ -189,13 +194,99 @@ fn void cleanup(State* state)
   }
 }
 
+fn void on_resize(Winsize winsize)
+{
+  state.winsize = winsize;
+
+  if (catch excuse = render()) {
+    error.append_chars(string::tformat("Render failed: %s", excuse));
+    state.cancelled = true;
+    ti::stop();
+  }
+}
+
+fn void handle_key(Key key)
+{
+  bool should_render;
+
+  usz old_query_len = state.query.len();
+  
+  switch (key) {
+    // Backspace
+    case key::BSPC:
+      if (old_query_len > 0 && state.cursor) {
+        state.query.delete(state.cursor - 1);
+        state.cursor--;
+        should_render = true;
+      }
+    // Enter key
+    case key::ENTER:
+      ti::stop();
+    case key::ctrl_key('c'):
+      state.cancelled = true;
+      ti::stop();
+
+    // Left arrow key
+    case key::LEFT:
+      nextcase;
+    case key::ctrl_key('h'):
+      if (state.cursor) {
+        state.cursor--;
+        update_cursor()!!;
+      }
+    // Right arrow key
+    case key::RIGHT:
+      nextcase;
+    case key::ctrl_key('l'):
+      if (state.cursor < old_query_len) {
+        state.cursor++;
+        update_cursor()!!;
+      }
+    // Up arrow key
+    case key::UP:
+      nextcase;
+    case key::ctrl_key('p'):
+      if (state.filtered_options.len()) {
+        if (state.selected_index) {
+          state.selected_index--;
+          should_render = true;
+        }
+      }
+    // Down arrow key
+    case key::DOWN:
+      nextcase;
+    case key::ctrl_key('n'):
+      if (state.selected_index < state.filtered_options.len() - 1) {
+        state.selected_index++;
+        should_render = true;
+      }
+    default:
+      if (key[1] == 0) {
+        state.query.insert_char_at(state.cursor, key[0]);
+        state.cursor++;
+      }
+  }
+
+  if (old_query_len != state.query.len()) {
+    filter_options();
+    should_render = true;
+  }
+
+  if (should_render) {
+    if (catch excuse = render()) {
+      error.append_chars(string::tformat("Render failed: %s", excuse));
+      state.cancelled = true;
+      ti::stop();
+    }
+  }
+}
+
 fn int main(String[] args)
 {
-  State state;
   state.options.tinit();
   state.query.tinit();
   error.tinit();
-  defer cleanup(&state);
+  defer cleanup();
 
   while (true) {
     String? line = io::treadline();
@@ -208,106 +299,18 @@ fn int main(String[] args)
     state.options.push(line);
   }
 
-  filter_options(&state);
+  filter_options();
 
-  ti::init(&&file::open("/dev/tty", "r"), &&file::open("/dev/tty", "w"))!!;
-  if (catch excuse = ti::start()) {
-    error.append_chars(string::tformat("%s", excuse));
-    return 1;
-  }
+  keymap.tinit();
+  keymap.default_handler = &handle_key;
+
+  ti::set_keymap(keymap);
+
+  ti::init(null, &&file::open("/dev/tty", "r"), &&file::open("/dev/tty", "w"))!!;
 
   state.winsize = ti::get_winsize();
 
-  bool should_render = true;
-  while (ti::is_running()) {
-    if (should_render) {
-      if (catch excuse = render(state)) {
-        error.append_chars(string::tformat("Render failed: %s", excuse));
-        state.cancelled = true;
-        return 1;
-      }
-
-      update_cursor(state)!!;
-      should_render = false;
-    }
-
-    if (try event = ti::get_event()) {
-      if (event.type == EventType.WIN_RESIZE) {
-        state.winsize = event.new_size;
-        should_render = true;
-      } else if (event.type == EventType.INPUT) {
-        String input = event.input;
-        usz old_query_len = state.query.len();
-
-        switch ((char[])input) {
-          case {ti::@ctrl_key('c')}:
-            ti::stop();
-            state.cancelled = true;
-            return 1;
-          // Backspace
-          case {127}:
-            if (old_query_len > 0 && state.cursor) {
-              state.query.delete(state.cursor - 1);
-              state.cursor--;
-            }
-          // Enter key
-          case {13}:
-            ti::stop();
-          // Left arrow key
-          case {27,91,68}:
-            nextcase;
-          case {ti::@ctrl_key('h')}:
-            if (state.cursor) {
-              state.cursor--;
-              update_cursor(state)!!;
-            }
-          // Right arrow key
-          case {27,91,67}:
-            nextcase;
-          case {ti::@ctrl_key('l')}:
-            if (state.cursor < old_query_len) {
-              state.cursor++;
-              update_cursor(state)!!;
-            }
-          // Up arrow key
-          case {27,91,65}:
-            nextcase;
-          case {27,91,90}:
-            nextcase;
-          case {ti::@ctrl_key('p')}:
-            if (state.filtered_options.len()) {
-              if (state.selected_index) {
-                state.selected_index--;
-                should_render = true;
-              }
-            }
-          // Down arrow key
-          case {27,91,66}:
-            nextcase;
-          case {9}:
-            nextcase;
-          case {ti::@ctrl_key('n')}:
-            if (state.selected_index < state.filtered_options.len() - 1) {
-              state.selected_index++;
-              should_render = true;
-            }
-          default:
-            if (input != "") {
-              state.query.insert_chars_at(state.cursor, input);
-              state.cursor++;
-            }
-        }
-
-        usz new_query_len = state.query.len();
-
-        if (old_query_len != new_query_len) {
-          filter_options(&state);
-          should_render = true;
-        }
-
-      }
-    }
-  }
+  ti::start(&render)!!;
 
   return 0;
 }

@@ -1,0 +1,3 @@
+[submodule "lib/terminal-interface.c3l"]
+	path = lib/terminal-interface.c3l
+	url = git@github.com:tomaskallup/terminal-interface.c3.git
