@@ -10,7 +10,7 @@ const PROMPT=">> ";
 
 struct FilteredOption {
   String value;
-  List(<usz>) match_indexes;
+  List{usz} match_indexes;
 }
 
 fn void FilteredOption.free(&self)
@@ -20,10 +20,10 @@ fn void FilteredOption.free(&self)
   mem::free(self);
 }
 
-def FilteredOptions = List(<FilteredOption*>);
+alias FilteredOptions = List{FilteredOption*};
 
 struct State {
-  List(<String>) options;
+  List{String} options;
   FilteredOptions filtered_options;
   DString query;
   usz cursor;
@@ -36,7 +36,7 @@ fn void filter_options(State* state)
 {
   state.selected_index = 0;
   String query = state.query.str_view();
-  String lower_query = query.temp_ascii_to_lower();
+  String lower_query = query.to_lower_copy(tmem);
   foreach(filtered_option: state.filtered_options) filtered_option.free();
   state.filtered_options.clear();
 
@@ -54,8 +54,8 @@ fn void filter_options(State* state)
     // String lower_option = option.temp_ascii_to_lower();
 
     usz option_index = 0;
-    List(<usz>) matching_indexes;
-    matching_indexes.new_init();
+    List{usz} matching_indexes;
+    matching_indexes.init(mem);
     for (usz i = 0; i < query.len; i++) {
       char needle = query[i];
       // char lower_needle = lower_query[i];
@@ -80,14 +80,14 @@ fn void filter_options(State* state)
   }
 }
 
-fn void! update_cursor(State state)
+fn void? update_cursor(State state)
 {
   // ti::write(ti::@escape_sequence("[6 q"))!;
   ti::set_cursor_pos(1, PROMPT.len + 1 + state.cursor)!;
   ti::flush()!;
 }
 
-fn void! render(State state)
+fn void? render(State state)
 {
   // Clear the screen
   ti::clear()!;
@@ -100,7 +100,7 @@ fn void! render(State state)
   @pool() {
     // Render prompt
     TermString prompt;
-    prompt.temp_init();
+    prompt.tinit();
     prompt.reset_style();
     prompt.append(PROMPT);
     prompt.color_256(40).style(Style.BOLD);
@@ -109,7 +109,7 @@ fn void! render(State state)
     ti::set_line(1, prompt.str_view())!;
 
     TermString rendered_option;
-    rendered_option.temp_init();
+    rendered_option.tinit();
     usz filtered_count = state.filtered_options.len();
     if (filtered_count) {
       FilteredOption*[] options_to_render = state.filtered_options.array_view()[state.selected_index:math::min(free_lines,filtered_count - state.selected_index)];
@@ -163,7 +163,7 @@ fn void! render(State state)
   };
 
   // Clear styles after rendering & flush
-	ti::reset_style(true)!;
+  ti::reset_style(true)!;
 }
 
 DString error;
@@ -192,17 +192,15 @@ fn void cleanup(State* state)
 fn int main(String[] args)
 {
   State state;
-  usz mark = allocator::temp().mark();
-  state.options.temp_init();
-  state.query.temp_init();
-  error.temp_init();
-  defer allocator::temp().reset(mark);
+  state.options.tinit();
+  state.query.tinit();
+  error.tinit();
   defer cleanup(&state);
 
   while (true) {
-    String! line = io::treadline();
+    String? line = io::treadline();
     if (catch excuse = line) {
-      if (excuse == IoError.EOF) break;
+      if (excuse == io::EOF) break;
       io::eprintfn("Error reading stdin: %s", excuse);
       return 1;
     }
@@ -246,16 +244,16 @@ fn int main(String[] args)
             ti::stop();
             state.cancelled = true;
             return 1;
-            // Backspace
+          // Backspace
           case {127}:
             if (old_query_len > 0 && state.cursor) {
               state.query.delete(state.cursor - 1);
               state.cursor--;
             }
-            // Enter key
+          // Enter key
           case {13}:
             ti::stop();
-            // Left arrow key
+          // Left arrow key
           case {27,91,68}:
             nextcase;
           case {ti::@ctrl_key('h')}:
@@ -263,7 +261,7 @@ fn int main(String[] args)
               state.cursor--;
               update_cursor(state)!!;
             }
-            // Right arrow key
+          // Right arrow key
           case {27,91,67}:
             nextcase;
           case {ti::@ctrl_key('l')}:
@@ -271,7 +269,7 @@ fn int main(String[] args)
               state.cursor++;
               update_cursor(state)!!;
             }
-            // Up arrow key
+          // Up arrow key
           case {27,91,65}:
             nextcase;
           case {27,91,90}:
@@ -283,7 +281,7 @@ fn int main(String[] args)
                 should_render = true;
               }
             }
-            // Down arrow key
+          // Down arrow key
           case {27,91,66}:
             nextcase;
           case {9}:
@@ -311,5 +309,5 @@ fn int main(String[] args)
     }
   }
 
-	return 0;
+  return 0;
 }
